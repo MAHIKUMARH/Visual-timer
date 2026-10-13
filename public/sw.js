@@ -1,11 +1,12 @@
 const CACHE_NAME = "visual-timer-v1";
+const BASE_URL = self.registration.scope;
 const ASSETS_TO_CACHE = [
-  "/",
-  "/index.html",
-  "/manifest.json",
-  "/favicon.svg",
-  "/icon-192.svg",
-  "/icon-512.svg"
+  BASE_URL,
+  new URL("index.html", BASE_URL).href,
+  new URL("manifest.json", BASE_URL).href,
+  new URL("favicon.svg", BASE_URL).href,
+  new URL("icon-192.svg", BASE_URL).href,
+  new URL("icon-512.svg", BASE_URL).href
 ];
 
 self.addEventListener("install", (event) => {
@@ -48,7 +49,7 @@ self.addEventListener("fetch", (event) => {
         return networkResponse;
       }).catch(() => {
         if (event.request.headers.get("accept")?.includes("text/html")) {
-          return caches.match("/");
+          return caches.match(BASE_URL);
         }
       });
     })
