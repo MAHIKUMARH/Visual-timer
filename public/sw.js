@@ -1,4 +1,4 @@
-const CACHE_NAME = "visual-timer-v1";
+const CACHE_NAME = "visual-timer-v2";
 const BASE_URL = self.registration.scope;
 const ASSETS_TO_CACHE = [
   BASE_URL,

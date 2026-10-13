@@ -25,10 +25,25 @@ export function LoadingScreen({
   const [isFadingOut, setIsFadingOut] = useState(false)
 
   useEffect(() => {
-    const duration = 1400 // 1.4s duration for optimal perceived elegance
+    const duration = 1550
+    const fadeDuration = 450
     let start: number | null = null
     let frameId = 0
     let completionTimeoutId: number | undefined
+    let fallbackTimeoutId: number | undefined
+    let didComplete = false
+
+    const finishLoading = () => {
+      if (didComplete) return
+      didComplete = true
+      if (fallbackTimeoutId !== undefined) window.clearTimeout(fallbackTimeoutId)
+      setProgress(100)
+      setMessageIndex(CUTE_MESSAGES.length - 1)
+      setIsFadingOut(true)
+      completionTimeoutId = window.setTimeout(() => {
+        onComplete?.()
+      }, fadeDuration)
+    }
 
     const frame = (now: number) => {
       start ??= now
@@ -49,17 +64,16 @@ export function LoadingScreen({
       if (raw < 1) {
         frameId = requestAnimationFrame(frame)
       } else {
-        setIsFadingOut(true)
-        completionTimeoutId = window.setTimeout(() => {
-          onComplete?.()
-        }, 450)
+        finishLoading()
       }
     }
 
     frameId = requestAnimationFrame(frame)
+    fallbackTimeoutId = window.setTimeout(finishLoading, duration)
     return () => {
       cancelAnimationFrame(frameId)
       if (completionTimeoutId !== undefined) window.clearTimeout(completionTimeoutId)
+      if (fallbackTimeoutId !== undefined) window.clearTimeout(fallbackTimeoutId)
     }
   }, [onComplete])
 
