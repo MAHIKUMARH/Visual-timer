@@ -3,13 +3,30 @@ import { playAsmrTick } from "./audio";
 
 const TICK_COUNT = 60;
 const RADIUS = 135;
+const WEDGE_RADIUS = 136;
 const CENTER = 160;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS; // ~848.23
+
+const getProgressPath = (progress) => {
+  const amount = Math.max(0, Math.min(100, progress));
+  if (amount <= 0) return "";
+  if (amount >= 100) {
+    return `M ${CENTER} ${CENTER} L ${CENTER} ${CENTER - WEDGE_RADIUS} A ${WEDGE_RADIUS} ${WEDGE_RADIUS} 0 1 1 ${CENTER} ${CENTER + WEDGE_RADIUS} A ${WEDGE_RADIUS} ${WEDGE_RADIUS} 0 1 1 ${CENTER} ${CENTER - WEDGE_RADIUS} Z`;
+  }
+
+  const angle = (amount / 100) * Math.PI * 2;
+  const endX = CENTER + WEDGE_RADIUS * Math.sin(angle);
+  const endY = CENTER - WEDGE_RADIUS * Math.cos(angle);
+  const largeArc = amount > 50 ? 1 : 0;
+  return `M ${CENTER} ${CENTER} L ${CENTER} ${CENTER - WEDGE_RADIUS} A ${WEDGE_RADIUS} ${WEDGE_RADIUS} 0 ${largeArc} 1 ${endX} ${endY} Z`;
+};
 
 export function RotaryDial({
   minutes,
   onMinutesChange,
   progress, // 0 to 100
+  remainingSeconds,
+  duration,
+  deadline,
   running,
   paused,
   finished,
@@ -25,6 +42,8 @@ export function RotaryDial({
   isAlarmActive,
 }) {
   const dialRef = useRef(null);
+  const progressArcRef = useRef(null);
+  const knobRef = useRef(null);
   const isDraggingRef = useRef(false);
   const prevMinuteRef = useRef(minutes);
 
@@ -96,13 +115,38 @@ export function RotaryDial({
     };
   }, [calculateMinuteFromEvent, onMinutesChange, muted, volume]);
 
-  // Compute knob position on dial perimeter based on minutes (or progress)
-  const knobAngleDeg = (minutes / 60) * 360 - 90; // -90 so 0 is at 12 o'clock
-  const knobRad = (knobAngleDeg * Math.PI) / 180;
-  const knobX = CENTER + RADIUS * Math.cos(knobRad);
-  const knobY = CENTER + RADIUS * Math.sin(knobRad);
+  useEffect(() => {
+    if (!running || paused || mode === "stopwatch" || deadline === null) return undefined;
 
-  const strokeDashoffset = CIRCUMFERENCE - (CIRCUMFERENCE * Math.min(100, Math.max(0, progress))) / 100;
+    let animationFrame;
+    const updateVisuals = () => {
+      const remaining = Math.max(0, (deadline - Date.now()) / 1000);
+      const capacity = Math.max(3600, duration);
+      const nextProgress = Math.min(100, Math.max(0, (remaining / capacity) * 100));
+
+      progressArcRef.current?.setAttribute("d", getProgressPath(nextProgress));
+
+      if (mode === "countdown" && knobRef.current) {
+        const angle = ((nextProgress / 100) * 360 - 90) * (Math.PI / 180);
+        const x = CENTER + WEDGE_RADIUS * Math.cos(angle);
+        const y = CENTER + WEDGE_RADIUS * Math.sin(angle);
+        knobRef.current.setAttribute("transform", `translate(${x}, ${y})`);
+      }
+
+      animationFrame = requestAnimationFrame(updateVisuals);
+    };
+
+    animationFrame = requestAnimationFrame(updateVisuals);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [running, paused, mode, deadline, duration]);
+
+  // Keep the handle aligned with remaining progress once the timer is active.
+  const knobMinutes = running ? (progress / 100) * 60 : minutes;
+  const knobAngleDeg = (knobMinutes / 60) * 360 - 90;
+  const knobRad = (knobAngleDeg * Math.PI) / 180;
+  const knobX = CENTER + WEDGE_RADIUS * Math.cos(knobRad);
+  const knobY = CENTER + WEDGE_RADIUS * Math.sin(knobRad);
+  const progressPath = getProgressPath(progress);
 
   // Generate 60 tick marks
   const tickMarks = [];
@@ -123,7 +167,7 @@ export function RotaryDial({
       const labelR = 127;
       const lx = CENTER + labelR * Math.cos(rad);
       const ly = CENTER + labelR * Math.sin(rad);
-      const num = i === 0 ? "60" : String(i);
+          const num = String(i);
       label = (
         <text
           key={`label-${i}`}
@@ -177,7 +221,7 @@ export function RotaryDial({
       aria-label="Interactive rotary countdown timer dial"
       aria-valuemin={1}
       aria-valuemax={60}
-      aria-valuenow={minutes}
+      aria-valuenow={running ? Math.ceil(remainingSeconds / 60) : minutes}
       tabIndex={0}
       onKeyDown={(e) => {
         if (mode !== "countdown" || (running && !paused)) return;
@@ -199,59 +243,21 @@ export function RotaryDial({
         viewBox="0 0 320 320"
         aria-hidden="true"
       >
-        <defs>
-          {/* Gradients */}
-          <linearGradient id="progressGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="var(--accent-gradient-start, #10b981)" />
-            <stop offset="100%" stopColor="var(--accent-gradient-end, #059669)" />
-          </linearGradient>
-
-          <linearGradient id="redAlarmGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#ff4d4d" />
-            <stop offset="100%" stopColor="#dc2626" />
-          </linearGradient>
-
-          <filter id="dialGlow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="8" result="blur" />
-            <feComposite in="SourceGraphic" in2="blur" operator="over" />
-          </filter>
-
-          <filter id="redAlarmGlow" x="-30%" y="-30%" width="160%" height="160%">
-            <feGaussianBlur stdDeviation="14" result="blur" />
-            <feComposite in="SourceGraphic" in2="blur" operator="over" />
-          </filter>
-        </defs>
-
-        {/* Outer Bezel Rim */}
+        <rect x="2" y="2" width="316" height="316" rx="25" className="dial-outer-bezel" />
+        <rect x="8" y="8" width="304" height="304" rx="20" className="dial-inner-bezel" />
+        <circle cx={CENTER} cy={CENTER} r="151" className="dial-clock-face" />
+        <circle cx={CENTER} cy={CENTER} r={WEDGE_RADIUS} className="dial-track-ring" />
+        <path
+          ref={progressArcRef}
+          d={progressPath}
+          className={`dial-progress-arc ${finished ? "red-blinking-stroke" : ""}`}
+        />
+        <g className="dial-ticks-group">{tickMarks}</g>
         <circle cx={CENTER} cy={CENTER} r="158" className="dial-bezel-rim" />
 
-        {/* Dial Ticks */}
-        <g className="dial-ticks-group">{tickMarks}</g>
-
-        {/* Background Track Ring */}
-        <circle
-          cx={CENTER}
-          cy={CENTER}
-          r={RADIUS}
-          className="dial-track-ring"
-        />
-
-        {/* Active Progress Ring */}
-        <circle
-          cx={CENTER}
-          cy={CENTER}
-          r={RADIUS}
-          className={`dial-progress-arc ${finished ? "red-blinking-stroke" : ""}`}
-          stroke={finished ? "url(#redAlarmGrad)" : "url(#progressGrad)"}
-          strokeDasharray={CIRCUMFERENCE}
-          strokeDashoffset={strokeDashoffset}
-          filter={finished ? "url(#redAlarmGlow)" : running ? "url(#dialGlow)" : undefined}
-          transform={`rotate(-90 ${CENTER} ${CENTER})`}
-        />
-
-        {/* Draggable Knob (in countdown mode when not running) */}
-        {mode === "countdown" && (!running || paused) && !finished && (
-          <g className="dial-knob-group" transform={`translate(${knobX}, ${knobY})`}>
+        {/* Draggable handle shows the selected or remaining duration. */}
+        {mode === "countdown" && !finished && (
+          <g ref={knobRef} className="dial-knob-group" transform={`translate(${knobX}, ${knobY})`}>
             <circle r="14" className="knob-halo" />
             <circle r="9" className="knob-body" />
             <circle r="3.5" className="knob-core" />
@@ -305,7 +311,7 @@ export function RotaryDial({
               onStopAlarm?.();
             }}
           >
-            🔔 STOP ALARM
+            Dismiss alert
           </button>
         ) : (
           <div className="dial-helper-text">

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { RotaryDial } from "./RotaryDial";
-import { ShaderBackground } from "@/components/ui/a-shader";
 import { Button } from "@/components/ui/button";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import {
@@ -101,13 +100,14 @@ function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || "forest");
   const [darkMode, setDarkMode] = useState(() => {
     const stored = localStorage.getItem(DARK_KEY);
-    return stored === null ? true : stored === "true"; // Default to sleek dark glass
+    return stored === null ? false : stored === "true";
   });
 
   // Sound & ASMR settings
   const [settings, setSettings] = useState(() => {
     const defaultSettings = {
       muted: false,
+      alertStyle: "sound",
       volume: 0.85,
       alarmVolume: 1.0,
       ambientTick: false,
@@ -118,6 +118,7 @@ function App() {
   });
 
   const [fullscreen, setFullscreen] = useState(false);
+  const [showTopbarActions, setShowTopbarActions] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [presets, setPresets] = useState(() => readStorage(PRESETS_KEY, DEFAULT_PRESETS));
@@ -135,6 +136,7 @@ function App() {
 
   // Background timer references
   const targetEndTimeRef = useRef(null);
+  const topbarMenuRef = useRef(null);
   const workerRef = useRef(null);
   const lastTickTimeRef = useRef(Date.now());
   const sessionStartedAtRef = useRef(null);
@@ -146,6 +148,24 @@ function App() {
   useEffect(() => localStorage.setItem(HISTORY_KEY, JSON.stringify(history)), [history]);
   useEffect(() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)), [settings]);
   useEffect(() => localStorage.setItem(TIMER_NAME_KEY, customTimerName), [customTimerName]);
+
+  useEffect(() => {
+    if (!showTopbarActions) return undefined;
+
+    const closeOnOutsideClick = (event) => {
+      if (!topbarMenuRef.current?.contains(event.target)) setShowTopbarActions(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setShowTopbarActions(false);
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showTopbarActions]);
 
   const showToast = useCallback((msg) => {
     setToastMessage(msg);
@@ -258,9 +278,9 @@ function App() {
   }, [mode, countdownMinutes, pomodoroPhase, pomodoroMinutes, intervalPhase, intervalWork, intervalRest, elapsedTime]);
 
   const progress = useMemo(() => {
-    if (mode === "stopwatch") return Math.min(100, ((elapsedTime % 60) / 60) * 100);
+    if (mode === "stopwatch") return ((elapsedTime % 3600) / 3600) * 100;
     const duration = getCurrentDuration();
-    return duration ? clamp(((duration - timeLeft) / duration) * 100, 0, 100) : 0;
+    return duration ? clamp((timeLeft / Math.max(3600, duration)) * 100, 0, 100) : 0;
   }, [mode, getCurrentDuration, timeLeft, elapsedTime]);
 
   // Record history
@@ -285,11 +305,13 @@ function App() {
     [customTimerName, getCurrentDuration, mode, elapsedTime, timeLeft, theme]
   );
 
-  // Complete timer & trigger high alarm + red blinking
+  // Complete timer and trigger the selected alert.
   const completeTimer = useCallback(() => {
-    // 1. Play high piercing alarm!
-    playHighAlarm(settings.muted, settings.alarmVolume);
-    // 2. Dispatch system notification
+    if (settings.alertStyle === "loud") {
+      playHighAlarm(settings.muted, settings.alarmVolume);
+    } else if (settings.alertStyle !== "silent") {
+      playStartChime(settings.muted, settings.volume);
+    }
     sendBrowserNotification();
 
     if (mode === "countdown") {
@@ -334,7 +356,9 @@ function App() {
     }
   }, [
     settings.muted,
+    settings.alertStyle,
     settings.alarmVolume,
+    settings.volume,
     sendBrowserNotification,
     mode,
     countdownMinutes,
@@ -367,7 +391,9 @@ function App() {
         if (!running || paused) return;
 
         if (mode === "stopwatch") {
-          setElapsedTime((v) => v + 1);
+          if (sessionStartedAtRef.current !== null) {
+            setElapsedTime(Math.floor((Date.now() - sessionStartedAtRef.current) / 1000));
+          }
           return;
         }
 
@@ -451,12 +477,16 @@ function App() {
     }
     playStartChime(settings.muted, settings.volume);
     targetEndTimeRef.current = Date.now() + timeLeft * 1000;
-    sessionStartedAtRef.current = Date.now();
+    sessionStartedAtRef.current = mode === "stopwatch" ? Date.now() - elapsedTime * 1000 : Date.now();
     setRunning(true);
     setPaused(false);
   };
 
   const pauseTimer = () => {
+    if (mode === "stopwatch" && sessionStartedAtRef.current) {
+      setElapsedTime(Math.floor((Date.now() - sessionStartedAtRef.current) / 1000));
+      sessionStartedAtRef.current = null;
+    }
     playPauseSound(settings.muted, settings.volume);
     setPaused(true);
     targetEndTimeRef.current = null;
@@ -464,6 +494,9 @@ function App() {
 
   const resumeTimer = () => {
     playStartChime(settings.muted, settings.volume);
+    if (mode === "stopwatch") {
+      sessionStartedAtRef.current = Date.now() - elapsedTime * 1000;
+    }
     targetEndTimeRef.current = Date.now() + timeLeft * 1000;
     setPaused(false);
     setRunning(true);
@@ -512,7 +545,7 @@ function App() {
   const updateCountdownMinutes = (value) => {
     const v = clamp(value, 1, 60);
     setCountdownMinutes(v);
-    if (!running && mode === "countdown") {
+    if ((!running || paused) && mode === "countdown") {
       setTimeLeft(v * 60);
     }
   };
@@ -870,124 +903,120 @@ function App() {
         fullscreen ? "fullscreen-mode" : ""
       } ${settings.compactFullscreen ? "compact-display" : ""}`}
     >
-      {/* Dynamic adaptive fluted glass shader background */}
-      <div className="shader-bg-wrapper" aria-hidden="true">
-        <ShaderBackground
-          className="shader-bg-canvas"
-          theme={theme}
-          darkMode={darkMode}
-          speed={0.35}
-        />
-        <div className="shader-bg-overlay" />
-      </div>
-
-      {/* Dynamic ambient glassmorphic background orbs */}
-      <div className="background-orb orb-one" aria-hidden="true" />
-      <div className="background-orb orb-two" aria-hidden="true" />
-      <div className="background-orb orb-three" aria-hidden="true" />
-
-      {/* Finished / Time's Up High Alert Banner */}
-      {finished && (
-        <div className="times-up-alert-banner">
-          <div className="banner-content">
-            <span className="banner-icon-pulsing">🚨</span>
-            <div>
-              <strong>TIME'S UP!</strong>
-              <span>{customTimerName} completed · High Alarm ringing</span>
-            </div>
-          </div>
-          <button className="banner-dismiss-btn" onClick={stopAlarmAndDismiss}>
-            STOP ALARM (Esc)
-          </button>
-        </div>
-      )}
-
       {/* Top Bar */}
       <header className="topbar">
         <div className="brand-group">
           <div className="brand-title-row">
-            <span className="brand-logo-gem" aria-hidden="true">⏱</span>
             <h1 className="brand">Visual Timer</h1>
-            <span className="brand-tag">ASMR & Dial</span>
           </div>
-          <div className="brand-subtitle">Interactive visual dial · Tactile focus · Offline ready</div>
         </div>
 
-        <div className="topbar-actions">
-          {installPrompt && (
+        <div className={`topbar-action-menu ${showTopbarActions ? "is-open" : ""}`} ref={topbarMenuRef}>
+          <button
+            type="button"
+            className="icon-button topbar-menu-trigger"
+            onClick={() => setShowTopbarActions((open) => !open)}
+            aria-label={showTopbarActions ? "Close actions menu" : "More actions"}
+            aria-haspopup="menu"
+            aria-expanded={showTopbarActions}
+            aria-controls="topbar-action-items"
+            title="More actions"
+          >
+            <span aria-hidden="true">⋮</span>
+          </button>
+
+          <div id="topbar-action-items" className="topbar-action-items" role="menu" aria-label="Timer actions">
+            {installPrompt && (
+              <button
+                className="pwa-install-button"
+                role="menuitem"
+                onClick={() => {
+                  setShowTopbarActions(false);
+                  triggerInstallApp();
+                }}
+                title="Install Visual Timer on your device"
+              >
+                Install
+              </button>
+            )}
+
             <button
-              className="pwa-install-button"
-              onClick={triggerInstallApp}
-              title="Install Visual Timer on your device"
+              className={`icon-button ${settings.muted ? "is-muted" : ""}`}
+              role="menuitem"
+              onClick={() => {
+                setSettings((s) => ({ ...s, muted: !s.muted }));
+                playAsmrPop(settings.muted, settings.volume);
+                setShowTopbarActions(false);
+              }}
+              title={settings.muted ? "Unmute audio (M)" : "Mute audio (M)"}
+              aria-label="Toggle mute"
             >
-              📥 Install App
+              {settings.muted ? "🔇" : "🔊"}
             </button>
-          )}
 
-          <button
-            className={`icon-button ${settings.muted ? "is-muted" : ""}`}
-            onClick={() => {
-              setSettings((s) => ({ ...s, muted: !s.muted }));
-              playAsmrPop(settings.muted, settings.volume);
-            }}
-            title={settings.muted ? "Unmute audio (M)" : "Mute audio (M)"}
-            aria-label="Toggle mute"
-          >
-            {settings.muted ? "🔇" : "🔊"}
-          </button>
+            <button
+              className="icon-button"
+              role="menuitem"
+              onClick={() => {
+                copyShareLink();
+                setShowTopbarActions(false);
+              }}
+              title="Copy shareable link for current timer"
+              aria-label="Share timer"
+            >
+              ↗
+            </button>
 
-          <button
-            className="icon-button"
-            onClick={() => copyShareLink()}
-            title="Copy shareable link for current timer"
-            aria-label="Share timer"
-          >
-            ↗
-          </button>
+            <button
+              className="icon-button"
+              role="menuitem"
+              onClick={() => {
+                setShowStats((v) => !v);
+                setShowSettings(false);
+                setShowTopbarActions(false);
+                playAsmrPop(settings.muted, settings.volume);
+              }}
+              title="Statistics & History (H)"
+              aria-label="Toggle statistics"
+            >
+              ▥
+            </button>
 
-          <button
-            className="icon-button"
-            onClick={() => {
-              setShowStats((v) => !v);
-              setShowSettings(false);
-              playAsmrPop(settings.muted, settings.volume);
-            }}
-            title="Statistics & History (H)"
-            aria-label="Toggle statistics"
-          >
-            ▥
-          </button>
+            <button
+              className="icon-button"
+              role="menuitem"
+              onClick={() => {
+                setShowSettings((v) => !v);
+                setShowStats(false);
+                setShowTopbarActions(false);
+                playAsmrPop(settings.muted, settings.volume);
+              }}
+              title="Settings (S)"
+              aria-label="Toggle settings"
+            >
+              ⚙
+            </button>
 
-          <button
-            className="icon-button"
-            onClick={() => {
-              setShowSettings((v) => !v);
-              setShowStats(false);
-              playAsmrPop(settings.muted, settings.volume);
-            }}
-            title="Settings (S)"
-            aria-label="Toggle settings"
-          >
-            ⚙
-          </button>
-
-          <button
-            className="icon-button"
-            onClick={() => {
-              toggleFullscreen();
-              playAsmrPop(settings.muted, settings.volume);
-            }}
-            title="Toggle fullscreen (F)"
-            aria-label="Toggle fullscreen"
-          >
-            {fullscreen ? "⛶" : "⛶"}
-          </button>
+            <button
+              className="icon-button"
+              role="menuitem"
+              onClick={() => {
+                toggleFullscreen();
+                setShowTopbarActions(false);
+                playAsmrPop(settings.muted, settings.volume);
+              }}
+              title="Toggle fullscreen (F)"
+              aria-label="Toggle fullscreen"
+            >
+              ⛶
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Main Glassmorphic Layout */}
+      {/* Main timer */}
       <section className="timer-layout">
-        <div className="timer-card glass-panel">
+        <div className="timer-card">
           {/* Mode Tabs */}
           <div className="mode-selector" role="tablist" aria-label="Timer modes">
             {[
@@ -1014,6 +1043,9 @@ function App() {
               minutes={countdownMinutes}
               onMinutesChange={updateCountdownMinutes}
               progress={progress}
+              remainingSeconds={displayTime}
+              duration={getCurrentDuration()}
+              deadline={targetEndTimeRef.current}
               running={running}
               paused={paused}
               finished={finished}
@@ -1032,13 +1064,32 @@ function App() {
               isAlarmActive={finished}
             />
 
+            {mode === "countdown" && (!running || paused) && (
+              <div className="dial-adjuster" aria-label="Adjust timer duration">
+                <button
+                  type="button"
+                  className="dial-adjust-button"
+                  onClick={() => updateCountdownMinutes(countdownMinutes - 1)}
+                  aria-label="Decrease duration by one minute"
+                >
+                  −
+                </button>
+                <span>{countdownMinutes} min</span>
+                <button
+                  type="button"
+                  className="dial-adjust-button"
+                  onClick={() => updateCountdownMinutes(countdownMinutes + 1)}
+                  aria-label="Increase duration by one minute"
+                >
+                  +
+                </button>
+              </div>
+            )}
+
             {/* Primary Action Buttons */}
             <div className="timer-controls">
               {!running && !finished && (
                 <Button
-                  withShader
-                  theme={theme}
-                  darkMode={darkMode}
                   className="primary-button cta-start"
                   onClick={startTimer}
                   aria-label="Start timer"
@@ -1049,9 +1100,6 @@ function App() {
 
               {running && !paused && (
                 <Button
-                  withShader
-                  theme={theme}
-                  darkMode={darkMode}
                   className="primary-button cta-pause"
                   onClick={pauseTimer}
                   aria-label="Pause timer"
@@ -1062,9 +1110,6 @@ function App() {
 
               {running && paused && (
                 <Button
-                  withShader
-                  theme={theme}
-                  darkMode={darkMode}
                   className="primary-button cta-resume"
                   onClick={resumeTimer}
                   aria-label="Resume timer"
@@ -1075,9 +1120,6 @@ function App() {
 
               {finished && (
                 <Button
-                  withShader
-                  theme={theme}
-                  darkMode={darkMode}
                   className="primary-button cta-restart"
                   onClick={() => {
                     stopAlarmAndDismiss();
@@ -1131,6 +1173,9 @@ function App() {
               </button>
             </div>
           </div>
+
+          <details className="timer-advanced">
+            <summary>Duration settings and presets</summary>
 
           {/* Mode Configuration Panels */}
           {mode === "countdown" && (
@@ -1379,9 +1424,10 @@ function App() {
               ))}
             </div>
           </section>
+          </details>
         </div>
 
-        {/* Right Glass Panels: Quick Info, Stats or Settings */}
+        {/* Optional settings and history */}
         {showStats ? (
           <StatsPanel stats={stats} history={history} clearHistory={clearHistory} />
         ) : showSettings ? (
@@ -1395,16 +1441,7 @@ function App() {
             onRequestNotifications={requestNotificationPermission}
             onClose={() => setShowSettings(false)}
           />
-        ) : (
-          <QuickInfo
-            stats={stats}
-            customTimerName={customTimerName}
-            onEditName={() => {
-              setTempTimerName(customTimerName);
-              setShowRenameModal(true);
-            }}
-          />
-        )}
+        ) : null}
       </section>
 
       {/* Save Preset Modal */}
@@ -1867,21 +1904,21 @@ function SettingsPanel({
       {/* Appearance */}
       <div className="theme-settings">
         <div className="setting-heading">
-          <strong>Glass Appearance</strong>
-          <span>Choose light or dark glassmorphism</span>
+          <strong>Appearance</strong>
+          <span>Choose a light or dark surface</span>
         </div>
         <div className="appearance-row">
           <button
             className={`appearance-button ${!darkMode ? "active" : ""}`}
             onClick={() => setDarkMode(false)}
           >
-            ☀ Light Glass
+            ☀ Light
           </button>
           <button
             className={`appearance-button ${darkMode ? "active" : ""}`}
             onClick={() => setDarkMode(true)}
           >
-            ◐ Dark Glass
+            ◐ Dark
           </button>
         </div>
       </div>
@@ -1889,8 +1926,8 @@ function SettingsPanel({
       {/* Theme palette */}
       <div className="theme-settings">
         <div className="setting-heading">
-          <strong>Accent Color</strong>
-          <span>Customize the glow & timer ring</span>
+          <strong>Timer color</strong>
+          <span>Choose the ring accent</span>
         </div>
         <div className="theme-grid">
           {[
@@ -1915,11 +1952,23 @@ function SettingsPanel({
       {/* ASMR Sound & Alarm */}
       <div className="theme-settings">
         <div className="setting-heading">
-          <strong>ASMR & Alarm Audio</strong>
-          <span>Tactile rotary ticks & piercing high alarm</span>
+          <strong>Alerts</strong>
+          <span>Choose how the timer signals completion</span>
         </div>
 
         <div className="sound-toggle-list">
+          <label className="alert-select-row">
+            <span>Completion sound</span>
+            <select
+              value={settings.alertStyle || "sound"}
+              onChange={(e) => setSettings({ ...settings, alertStyle: e.target.value })}
+            >
+              <option value="sound">Gentle chime</option>
+              <option value="loud">Loud alarm</option>
+              <option value="silent">Silent</option>
+            </select>
+          </label>
+
           <label className="toggle-row">
             <div>
               <span>Mute All Sounds</span>

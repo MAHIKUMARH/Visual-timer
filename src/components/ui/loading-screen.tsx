@@ -1,7 +1,6 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
-import { ShaderBackground } from "./a-shader"
 
 interface LoadingScreenProps {
   theme?: string
@@ -9,11 +8,7 @@ interface LoadingScreenProps {
   onComplete?: () => void
 }
 
-const CUTE_MESSAGES = [
-  "Polishing fluted glass... ✨",
-  "Winding up tactile dial... ⏱️",
-  "Preparing your peaceful focus... 🌿",
-]
+const LOADING_MESSAGES = ["Setting the dial", "Getting ready", "Ready"]
 
 export function LoadingScreen({
   theme = "forest",
@@ -22,36 +17,22 @@ export function LoadingScreen({
 }: LoadingScreenProps) {
   const [progress, setProgress] = useState(0)
   const [messageIndex, setMessageIndex] = useState(0)
+  const [secondsRemaining, setSecondsRemaining] = useState(2)
   const [isFadingOut, setIsFadingOut] = useState(false)
 
   useEffect(() => {
-    const duration = 1550
-    const fadeDuration = 450
-    let start: number | null = null
+    const totalDuration = 2000
+    const progressDuration = 1600
+    const start = performance.now()
     let frameId = 0
     let completionTimeoutId: number | undefined
-    let fallbackTimeoutId: number | undefined
-    let didComplete = false
-
-    const finishLoading = () => {
-      if (didComplete) return
-      didComplete = true
-      if (fallbackTimeoutId !== undefined) window.clearTimeout(fallbackTimeoutId)
-      setProgress(100)
-      setMessageIndex(CUTE_MESSAGES.length - 1)
-      setIsFadingOut(true)
-      completionTimeoutId = window.setTimeout(() => {
-        onComplete?.()
-      }, fadeDuration)
-    }
+    let fadeTimeoutId: number | undefined
 
     const frame = (now: number) => {
-      start ??= now
       const elapsed = now - start
-      const raw = Math.min(1, Math.max(0, elapsed / duration))
-      // Ease out cubic
-      const eased = 1 - Math.pow(1 - raw, 3)
-      setProgress(Math.round(eased * 100))
+      const raw = Math.min(1, Math.max(0, elapsed / progressDuration))
+      setProgress(Math.floor(raw * 100))
+      setSecondsRemaining(Math.ceil(Math.max(0, totalDuration - elapsed) / 1000))
 
       if (raw < 0.45) {
         setMessageIndex(0)
@@ -63,17 +44,20 @@ export function LoadingScreen({
 
       if (raw < 1) {
         frameId = requestAnimationFrame(frame)
-      } else {
-        finishLoading()
       }
     }
 
     frameId = requestAnimationFrame(frame)
-    fallbackTimeoutId = window.setTimeout(finishLoading, duration)
+    fadeTimeoutId = window.setTimeout(() => {
+      setProgress(100)
+      setIsFadingOut(true)
+    }, progressDuration)
+    completionTimeoutId = window.setTimeout(() => onComplete?.(), totalDuration)
+
     return () => {
       cancelAnimationFrame(frameId)
       if (completionTimeoutId !== undefined) window.clearTimeout(completionTimeoutId)
-      if (fallbackTimeoutId !== undefined) window.clearTimeout(fallbackTimeoutId)
+      if (fadeTimeoutId !== undefined) window.clearTimeout(fadeTimeoutId)
     }
   }, [onComplete])
 
@@ -86,24 +70,7 @@ export function LoadingScreen({
       aria-live="polite"
       aria-label="Loading Visual Timer"
     >
-      {/* Background fluted glass shader ambiance */}
-      <div className="loading-shader-backdrop" aria-hidden="true">
-        <ShaderBackground
-          theme={theme}
-          darkMode={darkMode}
-          speed={0.7}
-        />
-        <div className="loading-backdrop-overlay" />
-      </div>
-
-      {/* Center Cute & Elegant Glass Pod */}
-      <div className="loading-card glass-panel">
-        {/* Floating cute sparkles */}
-        <div className="sparkle sparkle-top" aria-hidden="true">✨</div>
-        <div className="sparkle sparkle-bottom" aria-hidden="true">✦</div>
-        <div className="sparkle sparkle-left" aria-hidden="true">⋆</div>
-
-        {/* Dial Animation */}
+      <div className="loading-card">
         <div className="loading-dial-wrapper">
           <svg className="loading-dial-svg" viewBox="0 0 120 120">
             {/* Background glass track */}
@@ -126,22 +93,18 @@ export function LoadingScreen({
             />
           </svg>
 
-          {/* Central Cute Bobbing Clock Glyph */}
           <div className="loading-center-gem">
-            <span className="loading-gem-icon">⏱</span>
+            <span className="loading-gem-icon">00:0{secondsRemaining}</span>
           </div>
         </div>
 
-        {/* Brand Title with Gradient */}
         <div className="loading-text-group">
           <h2 className="loading-title">Visual Timer</h2>
-          <span className="loading-pill-badge">TACTILE & ASMR</span>
           <p key={messageIndex} className="loading-message-ticker">
-            {CUTE_MESSAGES[messageIndex]}
+            {LOADING_MESSAGES[messageIndex]}
           </p>
         </div>
 
-        {/* Elegant Fluted Progress Track */}
         <div className="loading-progress-container">
           <div className="loading-progress-track">
             <div
